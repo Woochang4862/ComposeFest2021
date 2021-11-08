@@ -78,7 +78,7 @@ fun TodoScreen(
                 TodoItemEntryInput(onAddItem)
             } else {
                 Text(
-                    text = "Editing item",
+                    "Editing item",
                     style = MaterialTheme.typography.h6,
                     textAlign = TextAlign.Center,
                     modifier = Modifier
