@@ -178,10 +178,16 @@ fun Home() {
 
     val lazyListState = rememberLazyListState()
 
-    // The background color. The value is changed by the current tab.
+    // 배경색입니다. 값은 현재 탭에 의해 변경됩니다. (tabPage 가 state 변수)
     // TODO 1: Animate this color change.
-    val backgroundColor = if (tabPage == TabPage.Home) Purple100 else Green300
-
+//    val backgroundColor = if (tabPage == TabPage.Home) Purple100 else Green300
+    val backgroundColor by animateColorAsState( if (tabPage == TabPage.Home) Purple100 else Green300)
+    /**
+    animateColorAsState 의
+    반환된 값은 State<T> 개체이므로
+    by 선언과 함께 로컬 위임 속성을 사용하여
+    일반 변수처럼 처리할 수 있습니다.
+     */
     // The coroutine scope for event handlers calling suspend functions.
     val coroutineScope = rememberCoroutineScope()
     Scaffold(
@@ -195,7 +201,7 @@ fun Home() {
         backgroundColor = backgroundColor,
         floatingActionButton = {
             HomeFloatingActionButton(
-                extended = lazyListState.isScrollingUp(),
+                extended = lazyListState.isScrollingUp(), // 스크롤 업일 때만 펼치기
                 onClick = {
                     coroutineScope.launch {
                         showEditMessage()
@@ -293,7 +299,8 @@ private fun HomeFloatingActionButton(
             )
             // Toggle the visibility of the content with animation.
             // TODO 2-1: Animate this visibility change.
-            if (extended) {
+            //if (extended) {  // if 를 AnimatedVisibility 로 바꾸는 것만으로 애니메이션 가능
+            AnimatedVisibility (extended) { // bool 값이 바뀔 때마다 애니메이션 실행
                 Text(
                     text = stringResource(R.string.edit),
                     modifier = Modifier
@@ -312,8 +319,19 @@ private fun HomeFloatingActionButton(
 private fun EditMessage(shown: Boolean) {
     // TODO 2-2: The message should slide down from the top on appearance and slide up on
     //           disappearance.
+    //메시지는 나타날 때 위에서 아래로 슬라이드해야 하고 사라지면 위로 슬라이드해야 합니다.
     AnimatedVisibility(
-        visible = shown
+        visible = shown,
+        enter = slideInVertically(
+            // offset -fullHeight에서 0으로 아래로 슬라이딩하여 들어갑니다.
+            initialOffsetY = { fullHeight -> -fullHeight },
+            animationSpec = tween(durationMillis = 150, easing = LinearOutSlowInEasing)
+        ),
+        exit = slideOutVertically(
+            // 오프셋 0에서 -fullHeight까지 위로 슬라이드하여 종료합니다.
+            targetOffsetY = { fullHeight -> -fullHeight },
+            animationSpec = tween(durationMillis = 250, easing = FastOutLinearInEasing)
+        ) // 지속 시간 250
     ) {
         Surface(
             modifier = Modifier.fillMaxWidth(),
@@ -387,6 +405,7 @@ private fun TopicRow(topic: String, expanded: Boolean, onClick: () -> Unit) {
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(16.dp)
+                .animateContentSize() // 애니메이션 추가
         ) {
             Row {
                 Icon(
@@ -467,9 +486,47 @@ private fun HomeTabIndicator(
     tabPage: TabPage
 ) {
     // TODO 4: Animate these value changes.
-    val indicatorLeft = tabPositions[tabPage.ordinal].left
-    val indicatorRight = tabPositions[tabPage.ordinal].right
-    val color = if (tabPage == TabPage.Home) Purple700 else Green800
+    val transition = updateTransition(
+        tabPage,
+        label = "Tab indicator"
+    )
+    val indicatorLeft by transition.animateDp(
+        transitionSpec = {
+            if (TabPage.Home isTransitioningTo TabPage.Work) {
+                // Indicator moves to the right.
+                // The left edge moves slower than the right edge.
+                spring(stiffness = Spring.StiffnessVeryLow)
+            } else {
+                // Indicator moves to the left.
+                // The left edge moves faster than the right edge.
+                spring(stiffness = Spring.StiffnessMedium)
+            }
+        },
+        label = "Indicator left"
+    ) { page ->
+        tabPositions[page.ordinal].left
+    }
+    val indicatorRight by transition.animateDp(
+        transitionSpec = {
+            if (TabPage.Home isTransitioningTo TabPage.Work) {
+                // Indicator moves to the right
+                // The right edge moves faster than the left edge.
+                spring(stiffness = Spring.StiffnessMedium)
+            } else {
+                // Indicator moves to the left.
+                // The right edge moves slower than the left edge.
+                spring(stiffness = Spring.StiffnessVeryLow)
+            }
+        },
+        label = "Indicator right"
+    ) { page ->
+        tabPositions[page.ordinal].right
+    }
+    val color by transition.animateColor(
+        label = "Border color"
+    ) { page ->
+        if (page == TabPage.Home) Purple700 else Green800
+    }
     Box(
         Modifier
             .fillMaxSize()
@@ -555,7 +612,18 @@ private fun WeatherRow(
 @Composable
 private fun LoadingRow() {
     // TODO 5: Animate this value between 0f and 1f, then back to 0f repeatedly.
-    val alpha = 1f
+    val infiniteTransition = rememberInfiniteTransition()
+    val alpha by infiniteTransition.animateFloat(
+        initialValue = 0f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(
+            animation = keyframes {
+                durationMillis = 1000
+                0.7f at 500
+            },
+            repeatMode = RepeatMode.Reverse
+        )
+    )
     Row(
         modifier = Modifier
             .heightIn(min = 64.dp)
@@ -619,6 +687,9 @@ private fun Modifier.swipeToDismiss(
     onDismissed: () -> Unit
 ): Modifier = composed {
     // TODO 6-1: Create an Animatable instance for the offset of the swiped element.
+
+    // 스와이프할 수 있는 요소의 수평 오프셋을 나타내는 데 사용하겠습니다.
+    val offsetX = remember { Animatable(0f) } // Add this line
     pointerInput(Unit) {
         // Used to calculate a settling position of a fling animation.
         val decay = splineBasedDecay<Float>(this)
@@ -626,14 +697,26 @@ private fun Modifier.swipeToDismiss(
         coroutineScope {
             while (true) {
                 // Wait for a touch down event.
+                // 터치 다운 이벤트 받는 곳
                 val pointerId = awaitPointerEventScope { awaitFirstDown().id }
                 // TODO 6-2: Touch detected; the animation should be stopped.
+                offsetX.stop() // Add this line
                 // Prepare for drag events and record velocity of a fling.
                 val velocityTracker = VelocityTracker()
                 // Wait for drag events.
                 awaitPointerEventScope {
                     horizontalDrag(pointerId) { change ->
                         // TODO 6-3: Apply the drag change to the Animatable offset.
+                        /*
+                        TODO 6-3에서는 지속적으로 드래그 이벤트를 수신하고 있습니다
+                          터치 이벤트의 위치를 ​​애니메이션 값과 동기화해야 합니다.
+                          이를 위해 Animateable에서 snapTo를 사용할 수 있습니다.
+                         */
+                        // Add these 4 lines
+                        val horizontalDragOffset = offsetX.value + change.positionChange().x
+                        launch {
+                            offsetX.snapTo(horizontalDragOffset)
+                        }
                         // Record the velocity of the drag.
                         velocityTracker.addPosition(change.uptimeMillis, change.position)
                         // Consume the gesture event, not passed to external
@@ -644,18 +727,61 @@ private fun Modifier.swipeToDismiss(
                 val velocity = velocityTracker.calculateVelocity().x
                 // TODO 6-4: Calculate the eventual position where the fling should settle
                 //           based on the current offset value and velocity
+                /*
+                TODO 6-4는 요소가 방금 릴리스되어 버린 곳입니다.
+                요소를 원래 위치로 다시 밀어야 하는지
+                 아니면 밀어서 콜백을 호출해야 하는지를
+                  결정하기 위해 플링이 정착하는 최종 위치를 계산해야 합니다.
+                 */
+                // Add this line
+                val targetOffsetX = decay.calculateTargetValue(offsetX.value, velocity)
                 // TODO 6-5: Set the upper and lower bounds so that the animation stops when it
                 //           reaches the edge.
+                /*
+                TODO 6-5에서는 애니메이션을 시작하려고 합니다.
+                  그러나 그 전에 Animateable에 상한 및 하한 값 경계를
+                   설정하여 도달하는 즉시 중지되도록 합니다.
+                 */
+                offsetX.updateBounds(
+                    lowerBound = -size.width.toFloat(),
+                    upperBound = size.width.toFloat()
+                )
                 launch {
                     // TODO 6-6: Slide back the element if the settling position does not go beyond
                     //           the size of the element. Remove the element if it does.
+                    /*
+                    TODO 6-6은 마침내 애니메이션을 시작할 수 있는 곳입니다.
+                      먼저 앞서 계산한 플링의 침강 위치와 요소의 크기를 비교합니다.
+
+                      침강 위치가 크기보다 작으면 플링 속도가
+                      충분하지 않은 것입니다.
+
+                      animateTo를 사용하여 값을 0f로 되돌릴 수 있습니다.
+                      그렇지 않으면 우리는
+                      플링 애니메이션을 시작하기 위해imateDecay를 사용합니다.
+
+                       애니메이션이 완료되면(대부분 이전에 설정한 경계에 따라)
+                       콜백을 호출할 수 있습니다.
+                     */
+                    if (targetOffsetX.absoluteValue <= size.width) {
+                        // Not enough velocity; Slide back.
+                        offsetX.animateTo(targetValue = 0f, initialVelocity = velocity)
+                    } else {
+                        // Enough velocity to slide away the element to the edge.
+                        offsetX.animateDecay(velocity, decay)
+                        // The element was swiped away.
+                        onDismissed()
+                    }
                 }
             }
         }
     }
         .offset {
             // TODO 6-7: Use the animating offset value here.
-            IntOffset(0, 0)
+            /*
+            마지막으로 TODO 6-7을 참조하십시오. 모든 애니메이션과 제스처가 설정되었으므로 요소에 오프셋을 적용하는 것을 잊지 마십시오.
+             */
+            IntOffset(offsetX.value.roundToInt(), 0)
         }
 }
 
